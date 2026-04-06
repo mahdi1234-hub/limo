@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: limo-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  limo-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: limo-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - DEFAULT_MODEL=llama3.2
+      - LIMO_DEBUG=false
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  # Init container: pulls all configured models after Ollama is healthy
+  model-loader:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: limo-model-loader
+    entrypoint: ["python", "-m", "scripts.pull_models"]
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  ollama_data:

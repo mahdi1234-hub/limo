@@ -2,6 +2,7 @@
 
 
 def test_chat_completions(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.chat.return_value = {
         "message": {"role": "assistant", "content": "Hello! How can I help you today?"},
         "prompt_eval_count": 10,
@@ -23,6 +24,7 @@ def test_chat_completions(client, mock_ollama):
 
 
 def test_chat_completions_with_model(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.chat.return_value = {
         "message": {"role": "assistant", "content": "I am Mistral."},
         "prompt_eval_count": 5,
@@ -42,17 +44,36 @@ def test_chat_completions_with_model(client, mock_ollama):
     assert data["model"] == "mistral"
 
 
-def test_chat_completions_ollama_error(client, mock_ollama):
+def test_chat_completions_fallback_on_error(client, mock_ollama):
+    """When Ollama errors, fallback kicks in and returns 200."""
+    mock_ollama.ping.return_value = True
     mock_ollama.chat.side_effect = Exception("Connection refused")
 
     r = client.post(
         "/v1/chat/completions",
         json={"messages": [{"role": "user", "content": "Hi"}]},
     )
-    assert r.status_code == 502
+    assert r.status_code == 200
+    data = r.json()
+    assert data["choices"][0]["finish_reason"] == "fallback"
+    assert len(data["choices"][0]["message"]["content"]) > 0
+
+
+def test_chat_completions_fallback_when_disconnected(client, mock_ollama):
+    """When Ollama is down, fallback returns a response."""
+    mock_ollama.ping.return_value = False
+
+    r = client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "Hello!"}]},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["choices"][0]["finish_reason"] == "fallback"
 
 
 def test_generate(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.generate.return_value = {
         "response": "The capital of France is Paris.",
         "done": True,
@@ -71,6 +92,7 @@ def test_generate(client, mock_ollama):
 
 
 def test_generate_with_options(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.generate.return_value = {
         "response": "42",
         "done": True,
@@ -89,8 +111,11 @@ def test_generate_with_options(client, mock_ollama):
     mock_ollama.generate.assert_called_once()
 
 
-def test_generate_ollama_error(client, mock_ollama):
+def test_generate_fallback_on_error(client, mock_ollama):
+    """When Ollama errors, fallback returns a response."""
+    mock_ollama.ping.return_value = True
     mock_ollama.generate.side_effect = Exception("timeout")
 
     r = client.post("/v1/generate", json={"prompt": "test"})
-    assert r.status_code == 502
+    assert r.status_code == 200
+    assert len(r.json()["response"]) > 0

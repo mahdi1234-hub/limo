@@ -2,6 +2,7 @@
 
 
 def test_list_models(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.list_models.return_value = [
         {"name": "llama3.2", "size": 4_000_000_000, "digest": "abc123"},
         {"name": "mistral", "size": 4_500_000_000, "digest": "def456"},
@@ -16,7 +17,17 @@ def test_list_models(client, mock_ollama):
     assert "mistral" in names
 
 
+def test_list_models_fallback(client, mock_ollama):
+    mock_ollama.ping.return_value = False
+
+    r = client.get("/v1/models")
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data["models"]) > 0
+
+
 def test_pull_model(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.pull_model.return_value = {"status": "success"}
 
     r = client.post("/v1/models/pull", json={"model": "gemma2:2b"})
@@ -27,6 +38,7 @@ def test_pull_model(client, mock_ollama):
 
 
 def test_pull_model_error(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.pull_model.side_effect = Exception("not found")
 
     r = client.post("/v1/models/pull", json={"model": "nonexistent"})
@@ -34,6 +46,7 @@ def test_pull_model_error(client, mock_ollama):
 
 
 def test_delete_model(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.delete_model.return_value = True
 
     r = client.request("DELETE", "/v1/models", json={"model": "llama3.2"})
@@ -42,6 +55,7 @@ def test_delete_model(client, mock_ollama):
 
 
 def test_delete_model_not_found(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.delete_model.return_value = False
 
     r = client.request("DELETE", "/v1/models", json={"model": "missing"})
@@ -49,6 +63,7 @@ def test_delete_model_not_found(client, mock_ollama):
 
 
 def test_ensure_all_models(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.ensure_models.return_value = {
         "llama3.2": "ready",
         "mistral": "pulled",
@@ -63,6 +78,7 @@ def test_ensure_all_models(client, mock_ollama):
 
 
 def test_model_info(client, mock_ollama):
+    mock_ollama.ping.return_value = True
     mock_ollama.show_model.return_value = {
         "modelfile": "FROM llama3.2",
         "parameters": "temperature 0.7",
@@ -75,8 +91,12 @@ def test_model_info(client, mock_ollama):
     assert "modelfile" in data
 
 
-def test_model_info_not_found(client, mock_ollama):
-    mock_ollama.show_model.side_effect = Exception("not found")
+def test_model_info_fallback(client, mock_ollama):
+    """When Ollama is down, model info comes from fallback."""
+    mock_ollama.ping.return_value = False
 
-    r = client.get("/v1/models/nonexistent/info")
-    assert r.status_code == 404
+    r = client.get("/v1/models/llama3.2/info")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["_fallback"] is True
+    assert "llama3.2" in data["modelfile"]

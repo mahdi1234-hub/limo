@@ -1,8 +1,8 @@
-"""Chat and generation endpoints."""
+"""Chat and generation endpoints with automatic fallback."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from app.config import get_settings
@@ -15,6 +15,7 @@ from app.models.schemas import (
     GenerateResponse,
     UsageInfo,
 )
+from app.services.fallback import fallback_chat, fallback_generate
 from app.services.ollama import get_ollama_client
 
 router = APIRouter(prefix="/v1", tags=["chat"])
@@ -22,7 +23,10 @@ router = APIRouter(prefix="/v1", tags=["chat"])
 
 @router.post("/chat/completions", response_model=ChatResponse)
 async def chat_completions(req: ChatRequest):
-    """OpenAI-compatible chat completions endpoint backed by Ollama."""
+    """OpenAI-compatible chat completions endpoint backed by Ollama.
+
+    Automatically falls back to built-in responses when Ollama is unavailable.
+    """
     settings = get_settings()
     client = get_ollama_client()
     model = req.model or settings.default_model
@@ -36,20 +40,24 @@ async def chat_completions(req: ChatRequest):
     if req.max_tokens is not None:
         options["num_predict"] = req.max_tokens
 
-    # Streaming path
-    if req.stream:
+    # Try Ollama first, fall back if unavailable
+    connected = await client.ping()
+    if connected and not req.stream:
+        try:
+            data = await client.chat(model, messages, options=options or None)
+        except Exception:
+            data = fallback_chat(model, messages, options=options or None)
+    elif connected and req.stream:
         return StreamingResponse(
             client.chat_stream(model, messages, options=options or None),
             media_type="text/event-stream",
         )
-
-    # Non-streaming path
-    try:
-        data = await client.chat(model, messages, options=options or None)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Ollama error: {exc}") from exc
+    else:
+        data = fallback_chat(model, messages, options=options or None)
 
     assistant_msg = data.get("message", {})
+    is_fallback = data.get("_fallback", False)
+
     return ChatResponse(
         model=model,
         choices=[
@@ -59,6 +67,7 @@ async def chat_completions(req: ChatRequest):
                     role=assistant_msg.get("role", "assistant"),
                     content=assistant_msg.get("content", ""),
                 ),
+                finish_reason="fallback" if is_fallback else "stop",
             )
         ],
         usage=UsageInfo(
@@ -69,9 +78,10 @@ async def chat_completions(req: ChatRequest):
     )
 
 
+@router.post("/v1/generate", response_model=GenerateResponse, include_in_schema=False)
 @router.post("/generate", response_model=GenerateResponse)
 async def generate(req: GenerateRequest):
-    """Simple text generation endpoint."""
+    """Simple text generation with automatic fallback."""
     settings = get_settings()
     client = get_ollama_client()
     model = req.model or settings.default_model
@@ -82,10 +92,14 @@ async def generate(req: GenerateRequest):
     if req.max_tokens is not None:
         options["num_predict"] = req.max_tokens
 
-    try:
-        data = await client.generate(model, req.prompt, options=options or None)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Ollama error: {exc}") from exc
+    connected = await client.ping()
+    if connected:
+        try:
+            data = await client.generate(model, req.prompt, options=options or None)
+        except Exception:
+            data = fallback_generate(model, req.prompt, options=options or None)
+    else:
+        data = fallback_generate(model, req.prompt, options=options or None)
 
     return GenerateResponse(
         model=model,

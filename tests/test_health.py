@@ -7,6 +7,7 @@ def test_root(client):
     data = r.json()
     assert data["service"] == "limo"
     assert "docs" in data
+    assert data["status"] == "running"
 
 
 def test_health_ollama_connected(client, mock_ollama):
@@ -26,11 +27,13 @@ def test_health_ollama_connected(client, mock_ollama):
     assert data["version"] == "0.3.0"
 
 
-def test_health_ollama_disconnected(client, mock_ollama):
+def test_health_ollama_disconnected_shows_fallback(client, mock_ollama):
     mock_ollama.ping.return_value = False
 
     r = client.get("/health")
     assert r.status_code == 200
     data = r.json()
-    assert data["status"] == "degraded"
+    assert "fallback" in data["status"]
     assert data["ollama_connected"] is False
+    # Fallback mode still shows available models
+    assert len(data["available_models"]) > 0

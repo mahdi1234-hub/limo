@@ -256,20 +256,23 @@ def test_all_configured_models_have_test_cases():
     [m[0] for m in MODEL_TEST_CASES],
     ids=[m[0] for m in MODEL_TEST_CASES],
 )
-def test_chat_error_per_model(client, mock_ollama, model_name):
-    """Each model should return 502 when Ollama fails."""
-    mock_ollama.chat.side_effect = Exception(f"{model_name} inference timeout")
+def test_chat_fallback_per_model(client, mock_ollama, model_name):
+    """Each model should return fallback response when Ollama fails."""
+    mock_ollama.ping.return_value = False
 
     r = client.post(
         "/v1/chat/completions",
         json={
             "model": model_name,
-            "messages": [{"role": "user", "content": "test"}],
+            "messages": [{"role": "user", "content": "Hello"}],
         },
     )
 
-    assert r.status_code == 502
-    assert model_name in r.json()["detail"]
+    assert r.status_code == 200
+    data = r.json()
+    assert data["model"] == model_name
+    assert len(data["choices"][0]["message"]["content"]) > 0
+    assert data["choices"][0]["finish_reason"] == "fallback"
 
 
 @pytest.mark.parametrize(
@@ -277,14 +280,16 @@ def test_chat_error_per_model(client, mock_ollama, model_name):
     [m[0] for m in MODEL_TEST_CASES],
     ids=[m[0] for m in MODEL_TEST_CASES],
 )
-def test_generate_error_per_model(client, mock_ollama, model_name):
-    """Each model should return 502 on generation failure."""
-    mock_ollama.generate.side_effect = Exception(f"{model_name} out of memory")
+def test_generate_fallback_per_model(client, mock_ollama, model_name):
+    """Each model should return fallback response on generation failure."""
+    mock_ollama.ping.return_value = False
 
     r = client.post(
         "/v1/generate",
         json={"model": model_name, "prompt": "test"},
     )
 
-    assert r.status_code == 502
-    assert model_name in r.json()["detail"]
+    assert r.status_code == 200
+    data = r.json()
+    assert data["model"] == model_name
+    assert len(data["response"]) > 0

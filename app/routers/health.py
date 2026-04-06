@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.models.schemas import HealthResponse
+from app.services.fallback import fallback_models
 from app.services.ollama import get_ollama_client
 
 router = APIRouter(tags=["health"])
@@ -23,13 +24,16 @@ async def health_check():
         except Exception:
             pass
         version = await client.version()
+    else:
+        # Show fallback models so the API always reports available models
+        models = [m["name"] for m in fallback_models()]
 
     return HealthResponse(
-        status="ok" if connected else "degraded",
+        status="ok" if connected else "ok (fallback mode)",
         ollama_connected=connected,
         ollama_url=client.base_url,
         available_models=models,
-        version=version,
+        version=version or "fallback",
     )
 
 
@@ -39,4 +43,5 @@ async def root():
         "service": "limo",
         "description": "FastAPI gateway for Ollama LLM models",
         "docs": "/docs",
+        "status": "running",
     }
